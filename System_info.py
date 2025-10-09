@@ -4,6 +4,7 @@ import socket
 import psutil
 import subprocess
 #import winreg
+import datetime
 
 class SystemInfo:
     def __init__(self):
@@ -159,6 +160,13 @@ class SystemInfo:
                 except:
                     shell = 'unknown'
                     
+                install_date = ""
+                try:
+                    install_timestamp = os.path.getctime('/etc/hostname')
+                    install_date = datetime.datetime.fromtimestamp(install_timestamp).strftime('%Y-%m-%d')
+                except:
+                    pass
+                    
                 
                 return {
                     "System": os_info.get("NANE", "Linux"),
@@ -173,6 +181,7 @@ class SystemInfo:
                     "Edition": os_info.get("VARIANT", ""),
                     "Type": os_info.get("TYPE", ""),
                     "DisplayVersion" : os_info.get("VERSION", ""),
+                    "Shell": shell,
                     "Owner": hostname,
                     "InstallDate": ""
                 }
@@ -215,4 +224,4 @@ class SystemInfo:
                 "error": str(e)
             }
             
-   
+    
