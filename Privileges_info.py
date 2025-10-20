@@ -199,97 +199,112 @@ class PrivilgesInfo():
             return { " Privileges": str(e)}
             
     
+    def get_linux_privileges_info(self):
+        """Retourne toutes les informations de privilèges SANS mot de passe"""
+        return {
+            "Current privileges": self.get_linux_capabilities(),
+            "Escalation methods": self.find_linux_escalation_methods(),
+            "System weaknesses": self.find_linux_weaknesses(),
+            "Integrity level": "root" if os.geteuid() == 0 else "user"
+        }
+    
     def get_linux_capabilities(self):
-        """Récupère les capabilities du processus sans root"""
+        """Récupère les capabilities SANS commandes externes"""
         try:
-            # Méthode 1: Lire depuis /proc/self/status
+            # Lecture directe depuis /proc sans subprocess
             with open('/proc/self/status', 'r') as f:
                 for line in f:
                     if line.startswith('Cap'):
                         return line.strip()
-            return "No capabilities found"
+            return "No capabilities"
         except:
-            try:
-                # Méthode 2: Utiliser capsh si disponible
-                result = subprocess.run(
-                    ['capsh', '--print'], 
-                    capture_output=True, text=True, timeout=5
-                )
-                if result.returncode == 0:
-                    for line in result.stdout.split('\n'):
-                        if 'Current' in line and '=' in line:
-                            return line.split('=')[1].strip()
-                return "Unknown capabilities"
-            except:
-                return "Unable to determine capabilities"
+            return "Unknown capabilities"
     
     def find_linux_escalation_methods(self):
-        """Trouve les méthodes d'escalade de privilèges sans root"""
+        """Trouve les méthodes d'escalade SANS sudo ni mot de passe"""
         methods = []
         
+        # 1. Vérifier si déjà root
+        if os.geteuid() == 0:
+            methods.append("already_root")
+            return methods
+        
+        # 2. Vérifier les SUID dans le HOME directory seulement
         try:
-            # 1. Vérifier SUID dans les dossiers accessibles
-            accessible_dirs = [
-                os.path.expanduser("~"),
-                "/tmp", "/var/tmp",
-                "/opt", "/usr/local/bin",
-                "/home"
-            ]
+            home_dir = os.path.expanduser("~")
+            for root, dirs, files in os.walk(home_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        if os.stat(file_path).st_mode & 0o4000:  # SUID bit
+                            methods.append("suid_in_home")
+                            break
+                    except:
+                        continue
+                if "suid_in_home" in methods:
+                    break
+        except:
+            pass
+        
+        # 3. Vérifier l'appartenance aux groupes (SANS mot de passe)
+        try:
+            groups = os.getgroups()
+            group_names = []
+            try:
+                import grp
+                for gid in groups:
+                    try:
+                        group_names.append(grp.getgrgid(gid).gr_name)
+                    except:
+                        pass
+            except:
+                pass
             
-            for directory in accessible_dirs:
-                if os.path.exists(directory):
-                    result = subprocess.run(
-                        ['find', directory, '-perm', '-4000', '-type', 'f', '2>/dev/null'],
-                        capture_output=True, text=True, timeout=10
-                    )
-                    if result.stdout.strip():
-                        methods.append("suid_binaries_found")
-                        break
-        except:
-            pass
-        
-        # 2. Vérifier sudo sans mot de passe
-        try:
-            result = subprocess.run(
-                ['sudo', '-n', 'whoami'], 
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and "root" in result.stdout:
-                methods.append("passwordless_sudo")
-        except:
-            pass
-        
-        # 3. Vérifier les capabilities dangereuses
-        try:
-            caps = self.get_linux_capabilities()
-            dangerous_caps = ["cap_sys_admin", "cap_sys_ptrace", "cap_sys_module"]
-            for cap in dangerous_caps:
-                if cap in str(caps):
-                    methods.append(f"dangerous_capability_{cap}")
-        except:
-            pass
-        
-        # 4. Vérifier l'appartenance à des groupes privilégiés
-        try:
-            result = subprocess.run(['groups'], capture_output=True, text=True)
             privileged_groups = ["docker", "lxd", "sudo", "wheel", "adm"]
             for group in privileged_groups:
-                if group in result.stdout:
+                if group in group_names:
                     methods.append(f"privileged_group_{group}")
+        except:
+            pass
+        
+        # 4. Vérifier les variables d'environnement dangereuses
+        dangerous_env_vars = ["LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH"]
+        for env_var in dangerous_env_vars:
+            if env_var in os.environ:
+                methods.append(f"dangerous_env_{env_var}")
+        
+        # 5. Vérifier les fichiers avec capabilities (méthode manuelle)
+        try:
+            user_paths = os.environ.get('PATH', '').split(':')
+            for path_dir in user_paths:
+                if os.path.exists(path_dir):
+                    for binary in os.listdir(path_dir):
+                        binary_path = os.path.join(path_dir, binary)
+                        if os.path.isfile(binary_path):
+                            try:
+                                # Vérifier si le fichier a des capabilities via getcap
+                                # Mais sans l'exécuter pour éviter le mot de passe
+                                if os.access(binary_path, os.X_OK):
+                                    # On suppose que les binaires courants avec capabilities sont dangereux
+                                    dangerous_binaries = ["ping", "mount", "umount", "su"]
+                                    if binary in dangerous_binaries:
+                                        methods.append(f"potential_capability_{binary}")
+                            except:
+                                pass
         except:
             pass
         
         return methods
     
     def find_linux_weaknesses(self):
-        """Trouve les faiblesses du système sans root"""
+        """Trouve les faiblesses SANS sudo ni mot de passe"""
         weaknesses = []
         
         try:
-            # A) Fichiers configurables par l'utilisateur
+            # A) Fichiers personnels modifiables
             user_configs = [
                 os.path.expanduser("~/.bashrc"),
-                os.path.expanduser("~/.bash_profile"), 
+                os.path.expanduser("~/.bash_profile"),
                 os.path.expanduser("~/.profile"),
                 os.path.expanduser("~/.zshrc"),
                 os.path.expanduser("~/.ssh/authorized_keys"),
@@ -301,52 +316,27 @@ class PrivilgesInfo():
                     if os.access(config, os.W_OK):
                         weaknesses.append(f"writable_{os.path.basename(config)}")
             
-            # B) Variables d'environnement dangereuses
-            dangerous_env = ["LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH"]
+            # B) Répertoires personnels modifiables
+            user_dirs = [
+                os.path.expanduser("~/.config/systemd/user"),
+                os.path.expanduser("~/.local/bin"),
+                os.path.expanduser("~/bin"),
+            ]
+            
+            for directory in user_dirs:
+                if os.path.exists(directory):
+                    if os.access(directory, os.W_OK):
+                        weaknesses.append(f"writable_{os.path.basename(directory)}")
+            
+            # C) Variables d'environnement dangereuses
+            dangerous_env = ["LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH", "PERLLIB", "RUBYLIB"]
             for env_var in dangerous_env:
                 if env_var in os.environ:
                     weaknesses.append(f"dangerous_env_{env_var}")
             
-            # C) Sudo sans mot de passe pour commandes spécifiques
+            # D) Vérifier l'accès en écriture à /tmp
             try:
-                result = subprocess.run(
-                    ['sudo', '-l'], 
-                    capture_output=True, text=True, timeout=10
-                )
-                if result.returncode == 0:
-                    if "NOPASSWD" in result.stdout:
-                        weaknesses.append("sudo_nopasswd")
-                    # Vérifier les commandes spécifiques
-                    for line in result.stdout.split('\n'):
-                        if any(cmd in line for cmd in ['/bin/bash', '/bin/sh', 'python', 'perl']):
-                            if 'NOPASSWD' in line:
-                                weaknesses.append(f"sudo_{cmd}_nopasswd")
-            except:
-                pass
-            
-            # D) Appartenance au groupe docker
-            try:
-                result = subprocess.run(['id', '-nG'], capture_output=True, text=True)
-                if "docker" in result.stdout:
-                    weaknesses.append("docker_group_access")
-            except:
-                pass
-            
-            # E) Scripts exécutables par tous
-            try:
-                home_dir = os.path.expanduser("~")
-                result = subprocess.run(
-                    ['find', home_dir, '-type', 'f', '-perm', '-o=x', '-name', '*.sh', '2>/dev/null'],
-                    capture_output=True, text=True, timeout=10
-                )
-                if result.stdout.strip():
-                    weaknesses.append("world_executable_scripts")
-            except:
-                pass
-            
-            # F) Fichiers temporaires accessibles
-            try:
-                test_file = "/tmp/security_test"
+                test_file = "/tmp/test_no_password_123"
                 with open(test_file, 'w') as f:
                     f.write("test")
                 os.remove(test_file)
@@ -354,14 +344,93 @@ class PrivilgesInfo():
             except:
                 pass
             
+            # E) Vérifier les scripts exécutables par tous dans le home
+            try:
+                home_dir = os.path.expanduser("~")
+                for root, dirs, files in os.walk(home_dir):
+                    for file in files:
+                        if file.endswith('.sh') or file.endswith('.py'):
+                            file_path = os.path.join(root, file)
+                            try:
+                                if os.stat(file_path).st_mode & 0o001:  # Exécutable par others
+                                    weaknesses.append("world_executable_scripts")
+                                    break
+                            except:
+                                continue
+                    if "world_executable_scripts" in weaknesses:
+                        break
+            except:
+                pass
+            
+            # F) Vérifier les clés SSH avec permissions faibles
+            try:
+                ssh_dir = os.path.expanduser("~/.ssh")
+                if os.path.exists(ssh_dir):
+                    for file in os.listdir(ssh_dir):
+                        if file.startswith('id_'):
+                            file_path = os.path.join(ssh_dir, file)
+                            try:
+                                if os.stat(file_path).st_mode & 0o004:  # Lisible par others
+                                    weaknesses.append("world_readable_ssh_key")
+                                    break
+                            except:
+                                continue
+            except:
+                pass
+            
+            # G) Vérifier l'appartenance au groupe docker (SANS mot de passe)
+            try:
+                groups = os.getgroups()
+                group_names = []
+                try:
+                    import grp
+                    for gid in groups:
+                        try:
+                            group_names.append(grp.getgrgid(gid).gr_name)
+                        except:
+                            pass
+                except:
+                    pass
+                
+                if "docker" in group_names:
+                    weaknesses.append("docker_group_member")
+            except:
+                pass
+            
+            # H) Vérifier si des services systemd utilisateur existent
+            try:
+                user_systemd = os.path.expanduser("~/.config/systemd/user")
+                if os.path.exists(user_systemd):
+                    weaknesses.append("user_systemd_services")
+            except:
+                pass
+            
+            # I) Vérifier le crontab utilisateur
+            try:
+                # Vérifier si le fichier crontab existe sans l'exécuter
+                from crontab import CronTab  # Si la librairie est disponible
+                cron = CronTab(user=True)
+                if len(list(cron)) > 0:
+                    weaknesses.append("user_crontab_exists")
+            except:
+                # Fallback: vérifier le fichier directement
+                cron_files = [
+                    f"/var/spool/cron/crontabs/{os.getlogin()}",
+                    os.path.expanduser("~/.crontab")
+                ]
+                for cron_file in cron_files:
+                    if os.path.exists(cron_file):
+                        weaknesses.append("user_crontab_exists")
+                        break
+            
             return weaknesses
             
         except Exception as e:
             return [f"scan_error: {str(e)}"]
-        
-        
+    
+
         
 if __name__ == "__main__":
     si = PrivilgesInfo()
     print(si.get_privileges_info())  
-                                                       
+                                    
