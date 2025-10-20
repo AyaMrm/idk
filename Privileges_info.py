@@ -197,134 +197,171 @@ class PrivilgesInfo():
             return {"Privileges": privilges}
         except Exception as e :
             return { " Privileges": str(e)}
-        
-    def get_linus_capabilities(self):
+            
+    
+    def get_linux_capabilities(self):
+        """Récupère les capabilities du processus sans root"""
         try:
-            result = subprocess.run(['capsh', '--print'], capture_output= True, text=True)
-            capabilities = []
-            for line in result.stdout.split('\n'):
-                if 'Current' in line and '=' in line :
-                    capabilities = line.split('=')[1].split()
-                    break
-            return capabilities
+            # Méthode 1: Lire depuis /proc/self/status
+            with open('/proc/self/status', 'r') as f:
+                for line in f:
+                    if line.startswith('Cap'):
+                        return line.strip()
+            return "No capabilities found"
         except:
-            return []
-        
+            try:
+                # Méthode 2: Utiliser capsh si disponible
+                result = subprocess.run(
+                    ['capsh', '--print'], 
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'Current' in line and '=' in line:
+                            return line.split('=')[1].strip()
+                return "Unknown capabilities"
+            except:
+                return "Unable to determine capabilities"
+    
     def find_linux_escalation_methods(self):
+        """Trouve les méthodes d'escalade de privilèges sans root"""
         methods = []
         
-        #veririfier si y a SUID binaries 
         try:
-            result = subprocess.run(['find', '/', '-perm', '-4000', '-type', 'f', '2>/dev/null'], capture_output=True, text=True, timeout=5)
-            if result.stdout.strip():
-                methods.append("suid_escalation")
-        except :
+            # 1. Vérifier SUID dans les dossiers accessibles
+            accessible_dirs = [
+                os.path.expanduser("~"),
+                "/tmp", "/var/tmp",
+                "/opt", "/usr/local/bin",
+                "/home"
+            ]
+            
+            for directory in accessible_dirs:
+                if os.path.exists(directory):
+                    result = subprocess.run(
+                        ['find', directory, '-perm', '-4000', '-type', 'f', '2>/dev/null'],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    if result.stdout.strip():
+                        methods.append("suid_binaries_found")
+                        break
+        except:
             pass
         
-        #les droit du root 
+        # 2. Vérifier sudo sans mot de passe
         try:
-            result = subprocess.run(['sudo', '-l'], capture_output=True, text=True)
-            if result.returncode == 0:
-                methods.append("sudo_escalation")
+            result = subprocess.run(
+                ['sudo', '-n', 'whoami'], 
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and "root" in result.stdout:
+                methods.append("passwordless_sudo")
+        except:
+            pass
+        
+        # 3. Vérifier les capabilities dangereuses
+        try:
+            caps = self.get_linux_capabilities()
+            dangerous_caps = ["cap_sys_admin", "cap_sys_ptrace", "cap_sys_module"]
+            for cap in dangerous_caps:
+                if cap in str(caps):
+                    methods.append(f"dangerous_capability_{cap}")
+        except:
+            pass
+        
+        # 4. Vérifier l'appartenance à des groupes privilégiés
+        try:
+            result = subprocess.run(['groups'], capture_output=True, text=True)
+            privileged_groups = ["docker", "lxd", "sudo", "wheel", "adm"]
+            for group in privileged_groups:
+                if group in result.stdout:
+                    methods.append(f"privileged_group_{group}")
         except:
             pass
         
         return methods
     
     def find_linux_weaknesses(self):
+        """Trouve les faiblesses du système sans root"""
         weaknesses = []
+        
         try:
-            # 1-pour permissions / 2- access shadow/ 3- permission sudoers/ 4- crontab modifiable
-            weak_configs = [
-                "/etc/passwd",
-                "/etc/shadow",
-                "/etc/sudoers",
-                "/etc/crontab"
+            # A) Fichiers configurables par l'utilisateur
+            user_configs = [
+                os.path.expanduser("~/.bashrc"),
+                os.path.expanduser("~/.bash_profile"), 
+                os.path.expanduser("~/.profile"),
+                os.path.expanduser("~/.zshrc"),
+                os.path.expanduser("~/.ssh/authorized_keys"),
+                os.path.expanduser("~/.ssh/config"),
             ]
-            # A) verifier si les file de config sont faibles 
-            for config in weak_configs:
+            
+            for config in user_configs:
                 if os.path.exists(config):
-                    try:
-                        if os.access(config, os.W_OK):
-                            weaknesses.append(f"writable_{os.path.basename(config)}")
-                    except:
-                        pass
-                    
-            #B)verifie si les contabs user sont modifiables 
+                    if os.access(config, os.W_OK):
+                        weaknesses.append(f"writable_{os.path.basename(config)}")
             
-            try: 
-                result = subprocess.run(['find', '/var/spool/cron/', 'etc/cron.d/', '/etc/cron.daily', '-type', 'f', '-writable', '2>/dev/null'], capture_output=True, text=True, timeout=5)
-                if result.stdout.strip():
-                    weaknesses.append("writable_cron_files")
-            except:
-                pass
-            
-            #C) verifier si les service sys sont modifiable 
-            try:
-                result = subprocess.run(['find', '/etc/systemd/system', '/usr/lib/systemd/system','-name', '*.service', '-writable', '2>/dev/null'], capture_output=True, text=True, timeout=5)
-                if result.stdout.strip():
-                    weaknesses.append("writable_systemd_services")
-            except:
-                pass
-            
-            #D) si SUID binaire dangereux 
-            dangerous_suid = ["mount", "umount", "su", "sudo", "passwd", "chfn", "chsh", "pkexec", "at", "crontab", "find", "nmap", "vim", "nano"]
-            try:
-                result = subprocess.run(['find', '/', 'perm', '-4000', '-type', 'f', '2>/dev/null'], capture_output=True, text=True, timeout=5)
-                for binary in dangerous_suid:
-                    if f"/{binary}" in result.stdout:
-                        weaknesses.append(f"dangerous_suid_{binary}")
-            except:
-                pass  
-            
-            # E) verifie les capablilites dangereursers
-            dangerous_caps = ["cap_sys_admin", "cap_sys_ptrace", "cap_sys_module", "cap_net_raw"]
-            try:
-                result = subprocess.run(['capsh', '--print'], capture_output=True, text=True)
-                for cap in dangerous_caps:
-                    if cap in result.stdout:
-                        weaknesses.append(f"dangerous_cap{cap}")
-            except:
-                pass
-            
-            # F) verificaiton des variables d'env dangereuse
-            dangerous_env_vars = [
-            "LD_PRELOAD",       # Injection bibliothèques
-            "LD_LIBRARY_PATH",  # Chemin bibliothèques
-            "PYTHONPATH"        # Chemin Python
-            ]
-            for env_var  in dangerous_env_vars:
+            # B) Variables d'environnement dangereuses
+            dangerous_env = ["LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH"]
+            for env_var in dangerous_env:
                 if env_var in os.environ:
                     weaknesses.append(f"dangerous_env_{env_var}")
-                    
-            # G) verfication des permissions sudo sans psd
+            
+            # C) Sudo sans mot de passe pour commandes spécifiques
             try:
-                result = subprocess.run(['sudo', '-l'], capture_output=True, text=True, timeout=5)
-                if "NOPASSWD" in result.stdout:
-                    weaknesses.append("sudo_nopasswd")
+                result = subprocess.run(
+                    ['sudo', '-l'], 
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    if "NOPASSWD" in result.stdout:
+                        weaknesses.append("sudo_nopasswd")
+                    # Vérifier les commandes spécifiques
+                    for line in result.stdout.split('\n'):
+                        if any(cmd in line for cmd in ['/bin/bash', '/bin/sh', 'python', 'perl']):
+                            if 'NOPASSWD' in line:
+                                weaknesses.append(f"sudo_{cmd}_nopasswd")
             except:
                 pass
             
-            #H) verification docker sans restrictions
+            # D) Appartenance au groupe docker
             try:
-                result = subprocess.run(['docker', '--version'], capture_output=True, text=True)
-                if result.returncode ==0:
-                    result2 = subprocess.run(['docker', 'ps'], capture_output=True, text=True, timeout=5)
-                    if result2.returncode ==0:
-                        weaknesses.append("docker_access")
+                result = subprocess.run(['id', '-nG'], capture_output=True, text=True)
+                if "docker" in result.stdout:
+                    weaknesses.append("docker_group_access")
+            except:
+                pass
+            
+            # E) Scripts exécutables par tous
+            try:
+                home_dir = os.path.expanduser("~")
+                result = subprocess.run(
+                    ['find', home_dir, '-type', 'f', '-perm', '-o=x', '-name', '*.sh', '2>/dev/null'],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.stdout.strip():
+                    weaknesses.append("world_executable_scripts")
+            except:
+                pass
+            
+            # F) Fichiers temporaires accessibles
+            try:
+                test_file = "/tmp/security_test"
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+                weaknesses.append("writable_tmp")
             except:
                 pass
             
             return weaknesses
-        except Exception as e:
-            return ["unknown_weaknesses"]
             
+        except Exception as e:
+            return [f"scan_error: {str(e)}"]
         
-        
-    
         
         
 if __name__ == "__main__":
     si = PrivilgesInfo()
     print(si.get_privileges_info())  
-                                
+                                                       
