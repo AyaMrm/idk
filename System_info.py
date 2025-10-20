@@ -4,11 +4,13 @@ import socket
 import psutil
 import subprocess
 import datetime
+import User_info
 
 class SystemInfo:
     def __init__(self):
         self.detailed_platform_info = self.detect_os()
         self.detailed_architecture_info = self.get_architecture_info()
+        self.detailed_user_info = User_info()
         
     # cette fnct pour detecter quelle OS on a 
     def detect_os(self):
@@ -274,6 +276,7 @@ class SystemInfo:
             return []
         
     
+    
                 
 # Test
 if __name__ == "__main__":
@@ -281,3 +284,5 @@ if __name__ == "__main__":
     print(si.detailed_platform_info)
     print(si.detailed_architecture_info)
     
+    # avoir les details de chaque os qu'on pourrais avoir (marche)
+    # ''' def get_windows_details(self):
