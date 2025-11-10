@@ -25,7 +25,8 @@ class NetworkInfo:
                 "active_connections": self.get_linux_active_connections(),
                 "listening_ports": self.get_linux_listening_ports(),
                 "sensitive_data": self.get_linux_sensitive_data(),
-                "network_status": self.get_linux_network_status()
+                "network_status": self.get_linux_network_status(),
+                "mac_address": self.get_mac_addresses()
             }
         except Exception as e:
             return {"error": f"Linux network info error: {str(e)}"}
@@ -292,7 +293,8 @@ class NetworkInfo:
                 "active_connections": self.get_windows_active_connections(),
                 "listening_ports": self.get_windows_listening_ports(),
                 "sensitive_data": self.get_windows_sensitive_data(),
-                "network_status": self.get_windows_network_status()
+                "network_status": self.get_windows_network_status(),
+                "mac_address": self.get_mac_addresses()
             }
         except Exception as e:
             return {"error": f"Windows network info error: {str(e)}"}
@@ -529,6 +531,42 @@ class NetworkInfo:
             status["error"] = str(e)
         
         return status
+    
+    def get_mac_addresses(self):
+    
+        mac_addresses = {}
+        system = platform.system().lower()
+        
+        try:
+            if system == 'windows':
+                result = subprocess.run(
+                    ['ipconfig', '/all'], 
+                    capture_output=True, text=True, shell=True, timeout=10
+                )
+                current_interface = None
+                for line in result.stdout.split('\n'):
+                    if 'adapter' in line.lower() and ':' in line:
+                        current_interface = line.split(':')[0].strip()
+                    elif 'physical address' in line.lower() and current_interface:
+                        mac = line.split(':')[-1].strip()
+                        mac_addresses[current_interface] = mac
+                        
+            elif system == 'linux':
+                
+                result = subprocess.run(['ip', 'link'], capture_output=True, text=True, timeout=5)
+                current_interface = None
+                for line in result.stdout.split('\n'):
+                    if line.strip().startswith('2:') or line.strip().startswith('3:'):
+                        parts = line.split()
+                        if len(parts) > 1 and ':' in parts[1]:
+                            current_interface = parts[1].replace(':', '')
+                    elif 'link/ether' in line and current_interface:
+                        mac = line.split()[1]
+                        mac_addresses[current_interface] = mac
+        except Exception as e:
+            print(f"MAC address collection failed: {e}")
+        
+        return mac_addresses
 
 if __name__ == "__main__":
     si = NetworkInfo()
