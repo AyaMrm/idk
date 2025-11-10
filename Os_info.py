@@ -1,46 +1,11 @@
+import platform
+import subprocess
+import os 
 import datetime
-from Os_info import OsInfo
-from Architecture_info import ArchitectureInfo
-from User_info import UserInfo
-from Privileges_info import PrivilegesInfo  # Correction: PrivilegesInfo
-from Network_info import NetworkInfo
-import json
 
-class SystemInfo(OsInfo, ArchitectureInfo, UserInfo, PrivilegesInfo, NetworkInfo):  # Ligne complétée
+class OsInfo():
     def __init__(self):
-        # Initialiser les classes parentes
-        OsInfo.__init__(self)
-        ArchitectureInfo.__init__(self)
-        UserInfo.__init__(self)
-        PrivilegesInfo.__init__(self)  # Correction: PrivilegesInfo
-        NetworkInfo.__init__(self)
-        
-        # Rassembler toutes les infos
-        self.all_system_info = self.get_all_system_info()
-        
-    def get_all_system_info(self):
-        return {
-            "operating_system": self.os_info,  # De OsInfo
-            "architecture": self.get_architecture,  # De ArchitectureInfo (corrigé)
-            "user": self.detailed_user_data,  # De UserInfo (corrigé)
-            "privileges": self.get_privileges ,  # De PrivilegesInfo (corrigé)
-            "network": self.get_network,  # De NetworkInfo (corrigé)
-            "timestamp": datetime.datetime.now().isoformat()  # Correction: datetime.datetime
-        }
-    
-
-if __name__ == "__main__":
-    # CORRECTION: SystemInfo n'a pas besoin d'arguments
-    si = SystemInfo()
-    json.dumps(si.all_system_info, indent=2)
-    
-        
-    """
-    def __init__(self):
-        user = User_info.UserInfo()
-        self.detailed_platform_info = self.detect_os()
-        self.detailed_architecture_info = self.get_architecture_info()
-        self.detailed_user_info = user.get_user_data()
+        self.os_info = self.detect_os()
         
     # cette fnct pour detecter quelle OS on a 
     def detect_os(self):
@@ -54,8 +19,7 @@ if __name__ == "__main__":
             return {"System": "macOS", "Name": "macOS", "Version": "unknown"}
         else:
             return {"System": "unknown", "Name": "unknown", "Version": "unknown"}
-    
-    #info d'OS windows 
+        
     def get_windows_os_info(self):
         import winreg
         from datetime import datetime
@@ -127,7 +91,8 @@ if __name__ == "__main__":
         try:
             import re
             result = subprocess.run(
-            ['powershell', 'Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 1 | Format-Table -HideTableHeaders'],
+            ['powershell', 
+             'Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 1 | Format-Table -HideTableHeaders'],
             capture_output=True, text=True, timeout=15
             )
             if result.stdout:
@@ -136,7 +101,8 @@ if __name__ == "__main__":
                     if re.match(r'\d{1,2}/\d{1,2}/\d{4}', line.strip()):
                         return line.strip()
             import winreg
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\Results\Install") as key:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 
+                                r"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\Results\Install") as key:
                 last_update = winreg.QueryValueEx(key, "LastSuccessTime")[0]
                 if last_update:
                     return last_update.split('T')[0] 
@@ -205,105 +171,7 @@ if __name__ == "__main__":
             "Owner": ""
         }
         
-    #avoir les info sur l'architecture 
-    def get_architecture_info(self):
-        architecture_info = {
-            "CPU": self.get_cpu_info(),
-            "Memory": self.get_memory_info(),
-            "Storage": self.get_storage_info()
-        }
-        return architecture_info
-    
-    def get_cpu_info(self): 
-        system = platform.system().lower()
-        if system == 'windows':
-            return self.get_windows_cpu_info()
-        elif system == 'linux':
-            return self.get_linux_cpu_info()
-        else:
-            return self.get_generic_cpu_info()
-    
-    def get_windows_cpu_info(self):
-        try:
-            import psutil
-            cpu_freq = psutil.cpu_freq()
-            return {
-                "Model": platform.processor(),
-                "Architecture": platform.machine(),
-                "Physical Cores": psutil.cpu_count(logical=False),
-                "Logical Cores": psutil.cpu_count(logical=True),
-                "Frequency": round(cpu_freq.current)if cpu_freq else "Unknown"
-            }
-        except Exception as e:
-            return self.get_generic_cpu_info()
-        
-    def get_linux_cpu_info(self):
-        try:
-            import psutil
-            cpu_freq = psutil.cpu_freq()
-            
-            model = platform.processor()
-            physical_cores = psutil.cpu_count(logical=False)
-            
-            with open('/proc/cpuinfo', 'r') as f:
-                for line in f:
-                    if 'model name' in line:
-                        model = line.split(':')[1].strip()
-                        break
-                    
-            return {
-                "Model": model,
-                "Architecture": platform.machine(),
-                "Physical Cores": physical_cores,
-                "Logical Cores": psutil.cpu_count(logical=True),
-                "Frequency (MHz)": round(cpu_freq.current) if cpu_freq else "Unknown"
-            }
-        except Exception as e :
-            return self.get_generic_cpu_info()
-        
-    def get_generic_cpu_info(self):
-        return{
-            "Model": platform.processor(),
-            "Architecture": platform.machine(),
-            "Physical Cores": psutil.cpu_count(logical=False),
-            "Logical Cores": psutil.cpu_count(logical=True),
-            "Frequency (MHz)": "Unknown"
-        }
-        
-    def get_memory_info(self):
-        try:
-            import psutil
-            memory = psutil.virtual_memory()
-            return{
-                "Total GB": round(memory.total / (1024**3), 2),
-                "Available GB": round(memory.available / (1024**3), 2),
-                "Used GB": round(memory.used / (1024**3), 2),
-                "Usage Percent": round(memory.percent, 1)
-            }
-        except Exception as e:
-            return self.get_memory_info()
-        
-    def get_storage_info(self):
-        try:
-            import psutil 
-            storage_info = []
-            for partition in psutil.disk_partitions():
-                try:
-                    usage = psutil.disk_usage(partition.mountpoint)
-                    storage_info.append({
-                        "Device": partition.device,
-                        "Mountpoint": partition.mountpoint,
-                        "Type": partition.fstype,
-                        "Total_GB": round(usage.total / (1024**3), 2),
-                        "Free_GB": round(usage.free / (1024**3), 2),
-                        "Used_GB": round(usage.used / (1024**3), 2),
-                        "Usage_Percent": round(usage.percent, 1)
-                    })
-                except : 
-                    continue
-            return storage_info
-        except Exception as e:
-            return []
-        
-    """
-    
+
+if __name__ == "__main__":
+    si = OsInfo()
+    print(si.os_info)   

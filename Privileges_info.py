@@ -2,7 +2,7 @@ import platform
 import subprocess
 import os
 
-class PrivilgesInfo():
+class PrivilegesInfo():
     def __init__(self):
         self.get_privileges = self.get_privileges_info()
         
@@ -431,6 +431,6 @@ class PrivilgesInfo():
 
         
 if __name__ == "__main__":
-    si = PrivilgesInfo()
+    si = PrivilegesInfo()
     print(si.get_privileges_info())  
                                     
